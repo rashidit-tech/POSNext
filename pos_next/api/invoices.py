@@ -455,8 +455,16 @@ def update_invoice(data):
 
         invoice_doc.disable_rounded_total = disable_rounded
 
+        # Save payment amounts before set_missing_values() resets them
+        saved_payment_amounts = {p.mode_of_payment: p.amount for p in invoice_doc.payments}
+
         # Populate missing fields (company, currency, accounts, etc.)
         invoice_doc.set_missing_values()
+
+        # Restore payment amounts after set_missing_values() may have reset them
+        for payment in invoice_doc.payments:
+            if payment.mode_of_payment in saved_payment_amounts:
+                payment.amount = saved_payment_amounts[payment.mode_of_payment]
 
         # Calculate totals and apply discounts (with rounding disabled)
         invoice_doc.calculate_taxes_and_totals()
@@ -562,9 +570,27 @@ def submit_invoice(invoice=None, data=None):
             created = update_invoice(json.dumps(invoice))
             invoice_name = created.get("name")
             invoice_doc = frappe.get_doc(doctype, invoice_name)
+            # Explicitly rebuild payments child table to ensure amounts are not lost
+            if invoice.get("payments"):
+                invoice_doc.set("payments", [])
+                for p in invoice.get("payments", []):
+                    invoice_doc.append("payments", {
+                        "mode_of_payment": p.get("mode_of_payment"),
+                        "amount": p.get("amount", 0),
+                        "type": p.get("type", "Cash"),
+                    })
         else:
             invoice_doc = frappe.get_doc(doctype, invoice_name)
             invoice_doc.update(invoice)
+            # Explicitly rebuild payments child table to ensure amounts are not lost
+            if invoice.get("payments"):
+                invoice_doc.set("payments", [])
+                for p in invoice.get("payments", []):
+                    invoice_doc.append("payments", {
+                        "mode_of_payment": p.get("mode_of_payment"),
+                        "amount": p.get("amount", 0),
+                        "type": p.get("type", "Cash"),
+                    })
 
         # Ensure update_stock is set
         invoice_doc.update_stock = 1
